@@ -20,11 +20,7 @@
     "NODE_ENV": "production"
   },
   "functions": {
-    "runtime": {
-      "node": {
-        "version": "18.x"
-      }
-    }
+    "runtime": "18.x" 
   },
   "headers": [
     {
