@@ -5,7 +5,15 @@
       "src": "server.js",
       "use": "@vercel/node",
       "config": {
-        "includeFiles": ["config/**", "controllers/**", "middleware/**", "models/**", "routes/**", "socket/**", "utils/**"]
+        "includeFiles": [
+          "config/**",
+          "controllers/**",
+          "middleware/**",
+          "models/**",
+          "routes/**",
+          "socket/**",
+          "utils/**"
+        ]
       }
     }
   ],
@@ -18,11 +26,6 @@
   "env": {
     "PORT": "3000",
     "NODE_ENV": "production"
-  },
-  "functions": {
-    "runtime": {
-      "version": "18.x"
-    }
   },
   "headers": [
     {
