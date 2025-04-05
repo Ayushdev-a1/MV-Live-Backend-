@@ -21,7 +21,6 @@
   },
   "functions": {
     "runtime": {
-      "main": "server.js",
       "version": "18.x"
     }
   },
