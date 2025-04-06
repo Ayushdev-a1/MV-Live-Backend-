@@ -197,6 +197,7 @@ const io = new Server(server, {
 
 global.io = io
 
+//database connection
 
 db()
 
