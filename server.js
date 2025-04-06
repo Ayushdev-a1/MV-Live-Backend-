@@ -12,13 +12,15 @@ const path = require("path")
 const fs = require("fs")
 
 const connectDB = require("./config/db")
+// Connect to database early to fail fast if there's an issue
+connectDB().catch(console.error);
+
 require("./config/oauth")
 const { initializeSocketHandlers } = require("./socket")
 const authRoutes = require("./routes/authRoutes")
 const roomRoutes = require("./routes/roomRoutes")
 const userRoutes = require("./routes/userRoutes")
 const { errorHandler } = require("./middleware/error.middleware")
-const db = require('./config/db')
 
 // Create Express app and HTTP server
 const app = express()
@@ -220,11 +222,22 @@ app.use(
     resave: false,
     saveUninitialized: false,
     store: MongoStore.create({
-      mongoUrl: process.env.MONGO_URI || 'mongodb://localhost:27017/movie-stream',
+      mongoUrl: process.env.MONGO_URI,
       ttl: 24 * 60 * 60, // Session TTL (1 day)
       autoRemove: 'native', // Use MongoDB's TTL collection feature
       collectionName: 'sessions',
-      stringify: false
+      stringify: false,
+      // MongoDB connection options for serverless
+      clientPromise: (async () => {
+        // Reuse existing connection if available
+        if (mongoose.connection.readyState === 1) {
+          return mongoose.connection.getClient();
+        }
+        
+        // Otherwise try to connect
+        await connectDB();
+        return mongoose.connection.getClient();
+      })()
     }),
     cookie: { 
       secure: process.env.NODE_ENV === 'production',
@@ -267,8 +280,17 @@ app.use("/api/users", userRoutes)
 // Initialize Socket handlers AFTER defining routes
 initializeSocketHandlers(io);
 
-// Connect to database
-db();
+// Add a health check route for Vercel
+app.get('/api/health', (req, res) => {
+  // Check MongoDB connection
+  const dbStatus = mongoose.connection.readyState === 1 ? 'connected' : 'disconnected';
+  
+  res.json({
+    status: 'ok',
+    time: new Date().toISOString(),
+    database: dbStatus
+  });
+});
 
 // Error handling middleware
 app.use(errorHandler)
@@ -282,4 +304,4 @@ if (process.env.NODE_ENV !== 'production') {
 }
 
 // Vercel serverless function handler
-module.exports = app 
+module.exports = app
