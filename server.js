@@ -219,7 +219,7 @@ app.get("/uploads/:filename", (req, res) => {
 app.use(
   session({
     secret: process.env.SESSION_SECRET || "defaultsecret",
-    resave: false,
+    resave: true,  // Changed to true to ensure session is saved on every request
     saveUninitialized: false,
     store: MongoStore.create({
       mongoUrl: process.env.MONGO_URI,
@@ -227,7 +227,7 @@ app.use(
       autoRemove: 'native', // Use MongoDB's TTL collection feature
       collectionName: 'sessions',
       stringify: false,
-      touchAfter: 24 * 3600, // time period in seconds - only update session once per 24h
+      touchAfter: 60, // Update session more frequently (once per minute)
       // MongoDB connection options for serverless
       clientPromise: (async () => {
         // Reuse existing connection if available
@@ -246,6 +246,7 @@ app.use(
       maxAge: 24 * 60 * 60 * 1000, // 24 hours
       httpOnly: true,
       path: '/',
+      domain: process.env.NODE_ENV === 'production' ? '.vercel.app' : undefined
     },
     name: 'mv-live-sid', // Custom name for better security
   })
@@ -253,6 +254,20 @@ app.use(
 
 app.use(passport.initialize())
 app.use(passport.session())
+
+// Log session status on every request
+app.use((req, res, next) => {
+  if (req.path !== '/api/health' && req.path !== '/favicon.ico') {
+    console.log(`[${new Date().toISOString()}] Request path: ${req.method} ${req.path}`);
+    console.log(`Session exists: ${!!req.session}`);
+    console.log(`User authenticated: ${req.isAuthenticated ? req.isAuthenticated() : false}`);
+    console.log(`Session ID: ${req.sessionID}`);
+    if (req.session && req.session.passport) {
+      console.log(`Session passport user: ${req.session.passport.user}`);
+    }
+  }
+  next();
+});
 
 // Configure Socket.IO with better settings for video streaming
 const io = new Server(server, {

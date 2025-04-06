@@ -60,39 +60,91 @@ router.get("/status", async (req, res) => {
     res.header("Access-Control-Allow-Credentials", "true");
     res.header("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept, Authorization");
     
-    console.log("Auth status check: isAuthenticated=", req.isAuthenticated(), "user=", req.user ? req.user._id : "none");
+    console.log("Auth status check: isAuthenticated=", req.isAuthenticated && req.isAuthenticated(), 
+                "user=", req.user ? req.user._id || req.user.id : "none", 
+                "session=", req.session ? !!req.session.passport : "no session");
     
-    if (req.isAuthenticated() && req.user) {
+    // Try session-based authentication first
+    if (req.isAuthenticated && req.isAuthenticated() && req.user) {
       // Ensure we have the full user object
       const userId = req.user._id || req.user.id;
+      const googleId = req.user.googleId;
       let user;
       
-      if (req.user.googleId) {
-        user = await User.findOne({ googleId: req.user.googleId });
+      if (googleId) {
+        user = await User.findOne({ googleId });
       } else if (userId) {
         user = await User.findById(userId);
       }
       
-      if (!user) {
-        console.log("Auth status: No user found in database");
-        return res.json({ authenticated: false });
+      if (user) {
+        console.log("Auth status: User authenticated via session", user.email);
+        return res.json({
+          authenticated: true,
+          user: {
+            _id: user._id,
+            name: user.name,
+            email: user.email,
+            profilePic: user.profilePic,
+            googleId: user.googleId
+          }
+        });
       }
-
-      console.log("Auth status: User authenticated", user.email);
-      res.json({
-        authenticated: true,
-        user: {
-          _id: user._id,
-          name: user.name,
-          email: user.email,
-          profilePic: user.profilePic,
-          googleId: user.googleId
-        }
-      });
-    } else {
-      console.log("Auth status: Not authenticated");
-      res.json({ authenticated: false });
     }
+    
+    // Try JWT token authentication as fallback
+    if (req.headers.authorization && req.headers.authorization.startsWith('Bearer')) {
+      try {
+        const token = req.headers.authorization.split(' ')[1];
+        const decoded = jwt.verify(token, process.env.JWT_SECRET);
+        
+        const user = await User.findById(decoded._id || decoded.userId);
+        
+        if (user) {
+          console.log("Auth status: User authenticated via JWT", user.email);
+          return res.json({
+            authenticated: true,
+            user: {
+              _id: user._id,
+              name: user.name,
+              email: user.email,
+              profilePic: user.profilePic,
+              googleId: user.googleId
+            }
+          });
+        }
+      } catch (tokenError) {
+        console.error("Token verification failed:", tokenError.message);
+      }
+    }
+    
+    // Try Google ID authentication as last resort
+    if (req.headers.authorization && !req.headers.authorization.startsWith('Bearer')) {
+      try {
+        const googleId = req.headers.authorization;
+        const user = await User.findOne({ googleId });
+        
+        if (user) {
+          console.log("Auth status: User authenticated via Google ID", user.email);
+          return res.json({
+            authenticated: true,
+            user: {
+              _id: user._id,
+              name: user.name,
+              email: user.email,
+              profilePic: user.profilePic,
+              googleId: user.googleId
+            }
+          });
+        }
+      } catch (googleIdError) {
+        console.error("Google ID lookup failed:", googleIdError.message);
+      }
+    }
+    
+    // If no authentication method worked
+    console.log("Auth status: Not authenticated");
+    res.json({ authenticated: false });
   } catch (error) {
     console.error("Auth status error:", error);
     res.json({ authenticated: false, error: error.message });
@@ -180,14 +232,32 @@ router.get(
         }
       }
 
-      // Login the user
+      // Generate JWT token as a backup authentication method
+      const token = jwt.sign(
+        { _id: existingUser._id, name: existingUser.name }, 
+        process.env.JWT_SECRET, 
+        { expiresIn: "7d" }
+      );
+
+      // Login the user with session
       req.login(existingUser, (err) => {
         if (err) {
           console.error("Login error:", err);
           return res.redirect(`${process.env.CLIENT_URL}/login`);
         }
+        
         console.log(`User successfully logged in: ${existingUser.email}`);
-        res.redirect(`${process.env.CLIENT_URL}/landing`);
+        
+        // Set session cookie explicitly to help with persistence
+        req.session.save((saveErr) => {
+          if (saveErr) {
+            console.error("Session save error:", saveErr);
+          }
+          
+          // Redirect to landing page with token and Google ID in query params
+          // The frontend can use these as fallback authentication methods
+          res.redirect(`${process.env.CLIENT_URL}/landing?token=${token}&googleId=${googleId}`);
+        });
       });
     } catch (error) {
       console.error("Google login error:", error);
