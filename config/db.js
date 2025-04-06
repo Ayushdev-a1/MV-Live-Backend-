@@ -13,13 +13,10 @@ const connectDB = async () => {
   try {
     // Enhanced connection options for serverless environments
     const options = {
-      // Remove deprecated options
-      // useNewUrlParser: true,
-      // useUnifiedTopology: true,
-      
-      // Add options important for serverless
-      bufferCommands: false, // Disable mongoose buffering
-      serverSelectionTimeoutMS: 10000, // Reduce the server selection timeout for faster failure
+      // IMPORTANT: Allow buffering commands during initial connection
+      // This should be set to true in serverless environments to prevent this exact error
+      bufferCommands: true, 
+      serverSelectionTimeoutMS: 15000, // Increase timeout for serverless environment
       socketTimeoutMS: 45000, // Keep alive socket longer
       maxPoolSize: 10, // Maintain up to 10 socket connections
       minPoolSize: 0, // Don't maintain any minimum number of connections
@@ -28,6 +25,10 @@ const connectDB = async () => {
       authSource: 'admin', // Auth database
       retryWrites: true,
       tls: true,
+      // Add these options to handle serverless environments better
+      autoCreate: true,
+      autoIndex: true,
+      family: 4, // Use IPv4, avoids issues with some cloud providers
     };
 
     // Log that we're connecting

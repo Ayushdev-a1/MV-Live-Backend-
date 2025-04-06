@@ -292,16 +292,32 @@ app.get('/api/health', (req, res) => {
   });
 });
 
-// Error handling middleware
-app.use(errorHandler)
+// Improved error handling - all app code should come before this
+app.use(errorHandler);
 
-// Start server if not running in Vercel environment
-if (process.env.NODE_ENV !== 'production') {
-  const PORT = process.env.PORT || 5000
-  server.listen(PORT, () => {
-    console.log(`🚀 Server running on port ${PORT}`)
-  })
-}
+// Create async start function to ensure DB is connected first
+const startServer = async () => {
+  try {
+    // Connect to MongoDB before starting the server
+    await connectDB();
+    
+    const PORT = process.env.PORT || 5000;
+    
+    server.listen(PORT, () => {
+      console.log(`Server running on port ${PORT}`)
+    });
+    
+    // Initialize Socket.io handlers after server is running
+    initializeSocketHandlers(server);
+    
+  } catch (error) {
+    console.error("Failed to start server:", error);
+    process.exit(1);
+  }
+};
+
+// Start the server
+startServer();
 
 // Vercel serverless function handler
 module.exports = app
