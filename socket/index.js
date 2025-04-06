@@ -3,6 +3,7 @@ const Room = require("../models/Room")
 const User = require("../models/User")
 const mongoose = require("mongoose")
 
+// Fix circular dependency by not referencing global.io inside this module
 const initializeSocketHandlers = (io) => {
   io.on("connection", (socket) => {
     const googleId = socket.handshake.auth.googleId
@@ -220,67 +221,26 @@ const initializeSocketHandlers = (io) => {
 
     socket.on("change-video-source", async (data) => {
       if (!socket.isHost || !socket.roomId) {
-        socket.emit("error", { message: "Only hosts can change video source" })
-        return
+        return socket.emit("error", { message: "Only hosts can change video source" })
       }
 
       try {
         const { roomId, source, movieMetadata = {} } = data
-
-        // Validate source
         if (!source) {
-          socket.emit("error", { message: "Invalid video source" })
-          return
+          return socket.emit("error", { message: "Invalid video source" })
         }
 
-        console.log(`Host ${socket.user.username} changing video source in room ${roomId} to: ${source}`)
+        console.log(`Changing video source in room ${roomId} to ${source}`)
 
-        // Update video source
+        // Update video source for the room
         videoSources[roomId] = source
 
-        // Reset host state when changing video
-        hostStates[roomId] = { time: 0, playing: false }
+        // Reset host state
+        hostStates[roomId] = { time: 0, playing: true }
 
-        // Update room in database with new media
-        const room = await Room.findOne({ roomId });
-        if (room) {
-          // Add current media to history if changing
-          if (room.currentMedia && room.currentMedia.url) {
-            room.roomHistory.push({
-              mediaTitle: room.currentMedia.title,
-              mediaUrl: room.currentMedia.url,
-              watchedAt: new Date(),
-              participants: [...room.participants]
-            });
-            
-            // Limit history to 20 items
-            if (room.roomHistory.length > 20) {
-              room.roomHistory = room.roomHistory.slice(-20);
-            }
-          }
-          
-          // Update current media with metadata
-          const { title, duration, thumbnailUrl, genre, year, director } = movieMetadata;
-          
-          room.currentMedia = {
-            title: title || 'Untitled',
-            url: source,
-            type: 'movie',
-            duration: duration || 0,
-            thumbnailUrl,
-            genre,
-            year,
-            director,
-            uploadedBy: socket.user.userId,
-            uploadedAt: new Date()
-          };
-          
-          await room.save();
-        }
+        // Broadcast to all users in the room
+        io.to(roomId).emit("video-source-changed", source)
 
-        // Notify all users in the room
-        io.to(roomId).emit("video-source", source)
-        
         // Also send movie metadata
         io.to(roomId).emit("movie-metadata", {
           ...movieMetadata,
@@ -460,64 +420,35 @@ const initializeSocketHandlers = (io) => {
       }
     })
 
-    // Update user watch history when they leave
-    const updateWatchHistory = async () => {
-      if (!socket.user || !socket.roomId) return;
-      
-      try {
-        const room = await Room.findOne({ roomId: socket.roomId });
-        if (!room || !room.currentMedia || !room.currentMedia.url) return;
-        
-        const user = await User.findById(socket.user.userId);
-        if (!user) return;
-        
-        // Add to watch history
-        user.watchHistory.push({
-          roomId: socket.roomId,
-          movieTitle: room.currentMedia.title || 'Unknown',
-          moviePath: room.currentMedia.url,
-          watchedAt: new Date(),
-          duration: room.currentMedia.duration || 0,
-          watchedDuration: hostStates[socket.roomId]?.time || 0
-        });
-        
-        // Limit history to 50 items
-        if (user.watchHistory.length > 50) {
-          user.watchHistory = user.watchHistory.slice(-50);
-        }
-        
-        await user.save();
-      } catch (error) {
-        console.error("Error updating watch history:", error);
-      }
-    };
-
+    // Handle disconnection
     socket.on("disconnect", async () => {
-      console.log(`User disconnected: ${socket.user?.username || "Unknown"} (${socket.id})`)
-      
-      // Update watch history
-      await updateWatchHistory();
-
-      // Notify room about user leaving
-      if (socket.roomId) {
-        socket.to(socket.roomId).emit("user-left", socket.id)
-
-        try {
-          const roomUsers = await io.in(socket.roomId).allSockets()
-          io.to(socket.roomId).emit("user-count", roomUsers.size)
-
-          // If room is empty, clean up memory
-          if (roomUsers.size === 0) {
-            delete hostStates[socket.roomId]
-            delete videoSources[socket.roomId]
-            delete playlists[socket.roomId]
+      try {
+        console.log(`User disconnected: ${socket.user?.username || 'Unknown'} (${socket.id})`)
+        
+        // Notify room about user leaving
+        if (socket.roomId) {
+          socket.to(socket.roomId).emit("user-left", socket.id)
+          
+          // Update room participants in the database
+          const room = await Room.findOne({ roomId: socket.roomId })
+          if (room) {
+            const roomUsers = Array.from(await io.in(socket.roomId).allSockets())
+            io.to(socket.roomId).emit("user-count", roomUsers.length)
+            
+            // If this was the last user, update room status
+            if (roomUsers.length === 0) {
+              room.active = false
+              room.lastActive = new Date()
+              await room.save()
+            }
           }
-        } catch (error) {
-          console.error("Error handling disconnect:", error)
         }
+      } catch (error) {
+        console.error("Error handling disconnection:", error)
       }
     })
   })
 }
 
-module.exports = { initializeSocketHandlers }
+// Don't create any references to io here, just export the handler function
+module.exports = { initializeSocketHandlers } 
