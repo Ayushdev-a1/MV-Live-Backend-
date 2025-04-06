@@ -5,19 +5,37 @@ const { signup } = require("../controllers/authController");
 const { protect } = require("../middleware/authMiddleware");
 const router = express.Router();
 const User = require("../models/User");
+const mongoose = require("mongoose");
+const connectDB = require("../config/db");
+
+// Helper function to ensure database is connected
+const ensureDbConnected = async () => {
+  if (mongoose.connection.readyState !== 1) {
+    console.log("MongoDB not connected in routes, connecting now...");
+    await connectDB();
+  }
+  return true;
+};
 
 router.post("/login", async (req, res) => {
-  const { email, password } = req.body;
+  try {
+    await ensureDbConnected();
+    
+    const { email, password } = req.body;
 
-  const user = await User.findOne({ email });
-  if (!user || !(await user.matchPassword(password))) {
-    return res.status(401).json({ message: "Invalid credentials" });
+    const user = await User.findOne({ email });
+    if (!user || !(await user.matchPassword(password))) {
+      return res.status(401).json({ message: "Invalid credentials" });
+    }
+
+    // Generate JWT token
+    const token = jwt.sign({ _id: user._id, name: user.name }, process.env.JWT_SECRET, { expiresIn: "1d" });
+
+    res.json({ token, user: { _id: user._id, name: user.name } });
+  } catch (error) {
+    console.error("Login error:", error);
+    res.status(500).json({ message: "Server error", error: error.message });
   }
-
-  // Generate JWT token
-  const token = jwt.sign({ _id: user._id, name: user.name }, process.env.JWT_SECRET, { expiresIn: "1d" });
-
-  res.json({ token, user: { _id: user._id, name: user.name } });
 });
 
 router.options("/status", (req, res) => {
@@ -30,6 +48,8 @@ router.options("/status", (req, res) => {
 
 router.get("/status", async (req, res) => {
   try {
+    await ensureDbConnected();
+    
     // Set CORS headers explicitly for this endpoint
     res.header("Access-Control-Allow-Origin", "https://mv-live.netlify.app");
     res.header("Access-Control-Allow-Credentials", "true");
@@ -62,6 +82,8 @@ router.get(
   passport.authenticate("google", { failureRedirect: `${process.env.CLIENT_URL}/login` }),
   async (req, res) => {
     try {
+      await ensureDbConnected();
+      
       if (!req.user) {
         console.error("Google Auth Error: No user data");
         return res.redirect(`${process.env.CLIENT_URL}/login`);
