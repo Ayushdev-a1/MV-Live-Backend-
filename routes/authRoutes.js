@@ -3,12 +3,8 @@ const passport = require("passport");
 const jwt = require("jsonwebtoken");
 const { signup } = require("../controllers/authController");
 const { protect } = require("../middleware/authMiddleware");
-const User = require("../models/User");
-
 const router = express.Router();
-const CLIENT_URL = process.env.CLIENT_URL;
-
-router.post("/signup", signup);
+const User = require("../models/User");
 
 router.post("/login", async (req, res) => {
   const { email, password } = req.body;
@@ -24,8 +20,21 @@ router.post("/login", async (req, res) => {
   res.json({ token, user: { _id: user._id, name: user.name } });
 });
 
+router.options("/status", (req, res) => {
+  res.header("Access-Control-Allow-Origin", "https://mv-live.netlify.app");
+  res.header("Access-Control-Allow-Methods", "GET,OPTIONS");
+  res.header("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With, Accept, Origin");
+  res.header("Access-Control-Allow-Credentials", "true");
+  res.status(204).end();
+});
+
 router.get("/status", async (req, res) => {
   try {
+    // Set CORS headers explicitly for this endpoint
+    res.header("Access-Control-Allow-Origin", "https://mv-live.netlify.app");
+    res.header("Access-Control-Allow-Credentials", "true");
+    res.header("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept, Authorization");
+    
     if (req.isAuthenticated() && req.user) {
       const user = await User.findOne({ googleId: req.user.googleId });
       if (!user) {
@@ -50,12 +59,12 @@ router.get("/google", passport.authenticate("google", { scope: ["profile", "emai
 
 router.get(
   "/google/callback",
-  passport.authenticate("google", { failureRedirect: `${CLIENT_URL}/login` }),
+  passport.authenticate("google", { failureRedirect: `${process.env.CLIENT_URL}/login` }),
   async (req, res) => {
     try {
       if (!req.user) {
-        console.error("Google Auth Error:", err || info);
-        return res.redirect(`${CLIENT_URL}/login`);
+        console.error("Google Auth Error: No user data");
+        return res.redirect(`${process.env.CLIENT_URL}/login`);
       }
 
       let existingUser = await User.findOne({ googleId: req.user.id });
@@ -71,13 +80,13 @@ router.get(
 
       req.login(existingUser, (err) => {
         if (err) {
-          return res.redirect(`${CLIENT_URL}/login`);
+          return res.redirect(`${process.env.CLIENT_URL}/login`);
         }
-        res.redirect(`${CLIENT_URL}/landing`);
+        res.redirect(`${process.env.CLIENT_URL}/landing`);
       });
     } catch (error) {
       console.error("Google login error:", error);
-      res.redirect(`${CLIENT_URL}/login`);
+      res.redirect(`${process.env.CLIENT_URL}/login`);
     }
   }
 );
@@ -88,7 +97,7 @@ router.get("/logout", (req, res) => {
     if (err) {
       return res.status(500).json({ message: "Logout failed" });
     }
-    res.redirect(`${CLIENT_URL}/login`);
+    res.redirect(`${process.env.CLIENT_URL}/login`);
   });
 });
 
@@ -97,4 +106,4 @@ router.get("/protected", protect, (req, res) => {
   res.json({ message: "Access Granted", user: req.user });
 });
 
-module.exports = router;
+module.exports = router; 

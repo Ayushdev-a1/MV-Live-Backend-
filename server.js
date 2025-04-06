@@ -6,6 +6,7 @@ const cors = require("cors")
 const mongoose = require("mongoose")
 const passport = require("passport")
 const session = require("express-session")
+const MongoStore = require('connect-mongo')
 const multer = require("multer")
 const path = require("path")
 const fs = require("fs")
@@ -22,16 +23,57 @@ const db = require('./config/db')
 const app = express()
 const server = http.createServer(app)
 
-// CORS configuration with proper headers for large file uploads
-app.use(
-  cors({
-    origin: [process.env.CLIENT_URL, "https://mv-live.netlify.app"],
-    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"], // Explicitly allow OPTIONS
-    allowedHeaders: ["Content-Type", "Authorization"], // Allow common headers
-    credentials: true,
-    exposedHeaders: ["Content-Disposition", "Content-Length"],
-  }),
-);
+// ===== START OF CORS FIX =====
+// Allow specified origins
+const allowedOrigins = ['https://mv-live.netlify.app', 'http://localhost:5173'];
+
+// Basic CORS middleware enabling credentials
+app.use(cors({
+  origin: function (origin, callback) {
+    // Allow requests with no origin (like mobile apps or curl requests)
+    if (!origin) return callback(null, true);
+    if (allowedOrigins.indexOf(origin) === -1) {
+      return callback(null, false);
+    }
+    return callback(null, true);
+  },
+  credentials: true,
+  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With", "Accept", "Origin"]
+}));
+
+// Middleware to handle all OPTIONS requests and set CORS headers for all responses
+app.use((req, res, next) => {
+  const origin = req.headers.origin;
+  if (allowedOrigins.includes(origin)) {
+    res.header('Access-Control-Allow-Origin', origin);
+  }
+  
+  res.header('Access-Control-Allow-Credentials', 'true');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
+  
+  // Handle preflight OPTIONS requests
+  if (req.method === 'OPTIONS') {
+    return res.status(204).end();
+  }
+  
+  next();
+});
+
+// Handle all OPTIONS requests explicitly at the route level
+app.options('*', (req, res) => {
+  const origin = req.headers.origin;
+  if (allowedOrigins.includes(origin)) {
+    res.header('Access-Control-Allow-Origin', origin);
+  }
+  
+  res.header('Access-Control-Allow-Credentials', 'true');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
+  res.status(204).end();
+});
+// ===== END OF CORS FIX =====
 
 // Middleware
 app.use(express.json())
@@ -170,21 +212,35 @@ app.get("/uploads/:filename", (req, res) => {
   })
 })
 
+// Configure session with MongoDB store to fix the MemoryStore warning
 app.use(
   session({
     secret: process.env.SESSION_SECRET || "defaultsecret",
     resave: false,
-    saveUninitialized: true,
-    cookie: { secure: false }, // Set to true if using HTTPS
-  }),
+    saveUninitialized: false,
+    store: MongoStore.create({
+      mongoUrl: process.env.MONGO_URI || 'mongodb://localhost:27017/movie-stream',
+      ttl: 24 * 60 * 60, // Session TTL (1 day)
+      autoRemove: 'native', // Use MongoDB's TTL collection feature
+      collectionName: 'sessions',
+      stringify: false
+    }),
+    cookie: { 
+      secure: true,
+      sameSite: 'none',
+      maxAge: 24 * 60 * 60 * 1000, // 24 hours
+      httpOnly: true
+    },
+  })
 )
+
 app.use(passport.initialize())
 app.use(passport.session())
 
 // Configure Socket.IO with better settings for video streaming
 const io = new Server(server, {
   cors: {
-    origin: [process.env.CLIENT_URL, "https://mv-live.netlify.app"],
+    origin: "https://mv-live.netlify.app",
     methods: ["GET", "POST", "OPTIONS"],
     allowedHeaders: ["Content-Type", "Authorization"],
     credentials: true,
@@ -196,8 +252,6 @@ const io = new Server(server, {
 });
 
 global.io = io
-
-//database connection
 
 db()
 
@@ -218,4 +272,4 @@ server.listen(PORT, () => {
   console.log(`🚀 Server running on port ${PORT}`)
 })
 
-module.exports = { io }
+module.exports = { io } 
