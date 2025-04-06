@@ -49,16 +49,54 @@ passport.use(
                      `${googleId}@placeholder.com`;
         const profilePic = profile.photos && profile.photos.length > 0 ? profile.photos[0].value : null;
         
+        // First, try to find user by googleId
         let user = await User.findOne({ googleId });
 
+        // If not found by googleId, try to find by email
+        if (!user && email) {
+          user = await User.findOne({ email });
+          
+          // If found by email but no googleId, update the user record
+          if (user && !user.googleId) {
+            user.googleId = googleId;
+            if (profilePic) user.profilePic = profilePic;
+            await user.save();
+            console.log(`OAuth strategy: Updated existing user with Google ID: ${email}`);
+          }
+        }
+
+        // If still no user, create a new one
         if (!user) {
-          user = new User({
-            googleId,
-            name,
-            email,
-            profilePic,
-          });
-          await user.save();
+          try {
+            user = new User({
+              googleId,
+              name,
+              email,
+              profilePic,
+            });
+            await user.save();
+            console.log(`OAuth strategy: Created new user with Google ID: ${googleId}`);
+          } catch (createError) {
+            if (createError.code === 11000) {
+              // Handle duplicate key error
+              console.error(`OAuth strategy: Duplicate key error: ${JSON.stringify(createError.keyValue)}`);
+              
+              // Try to find the existing user
+              user = await User.findOne({ email });
+              
+              // If found, update the user
+              if (user) {
+                user.googleId = googleId;
+                if (profilePic) user.profilePic = profilePic;
+                await user.save();
+                console.log(`OAuth strategy: Updated user after duplicate error: ${email}`);
+              } else {
+                return done(new Error("Failed to create or find user account"), null);
+              }
+            } else {
+              return done(createError, null);
+            }
+          }
         }
  
         return done(null, user);

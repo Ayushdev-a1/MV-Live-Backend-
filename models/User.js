@@ -2,13 +2,32 @@ const mongoose = require("mongoose");
 const bcrypt = require("bcryptjs");
 
 const UserSchema = new mongoose.Schema({
-  googleId: { type: String, sparse: true },
-  name: { type: String, required: true },
+  googleId: { 
+    type: String, 
+    sparse: true, // Allow null for non-Google users
+    index: true   // Index for faster lookups
+  },
+  name: { 
+    type: String, 
+    required: true 
+  },
   email: { 
     type: String, 
+    index: true,  // Index for faster lookups
     unique: true, 
     required: function() { 
+      // Only require email for non-Google auth users
       return !this.googleId; 
+    },
+    // Add a custom validator to allow null/empty for Google users
+    validate: {
+      validator: function(value) {
+        // For Google users without email, allow empty
+        if (this.googleId && !value) return true;
+        // For regular users, require email
+        return !!value;
+      },
+      message: 'Email is required for non-Google users'
     }
   },
   profilePic: { type: String },

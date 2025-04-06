@@ -227,6 +227,7 @@ app.use(
       autoRemove: 'native', // Use MongoDB's TTL collection feature
       collectionName: 'sessions',
       stringify: false,
+      touchAfter: 24 * 3600, // time period in seconds - only update session once per 24h
       // MongoDB connection options for serverless
       clientPromise: (async () => {
         // Reuse existing connection if available
@@ -243,8 +244,10 @@ app.use(
       secure: process.env.NODE_ENV === 'production',
       sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
       maxAge: 24 * 60 * 60 * 1000, // 24 hours
-      httpOnly: true
+      httpOnly: true,
+      path: '/',
     },
+    name: 'mv-live-sid', // Custom name for better security
   })
 )
 

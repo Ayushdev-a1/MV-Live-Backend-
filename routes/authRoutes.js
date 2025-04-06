@@ -51,26 +51,51 @@ router.get("/status", async (req, res) => {
     await ensureDbConnected();
     
     // Set CORS headers explicitly for this endpoint
-    res.header("Access-Control-Allow-Origin", "https://mv-live.netlify.app");
+    const origin = req.headers.origin;
+    const allowedOrigins = ['https://mv-live.netlify.app', 'http://localhost:5173'];
+    
+    if (allowedOrigins.includes(origin)) {
+      res.header("Access-Control-Allow-Origin", origin);
+    }
     res.header("Access-Control-Allow-Credentials", "true");
     res.header("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept, Authorization");
     
+    console.log("Auth status check: isAuthenticated=", req.isAuthenticated(), "user=", req.user ? req.user._id : "none");
+    
     if (req.isAuthenticated() && req.user) {
-      const user = await User.findOne({ googleId: req.user.googleId });
+      // Ensure we have the full user object
+      const userId = req.user._id || req.user.id;
+      let user;
+      
+      if (req.user.googleId) {
+        user = await User.findOne({ googleId: req.user.googleId });
+      } else if (userId) {
+        user = await User.findById(userId);
+      }
+      
       if (!user) {
+        console.log("Auth status: No user found in database");
         return res.json({ authenticated: false });
       }
 
+      console.log("Auth status: User authenticated", user.email);
       res.json({
         authenticated: true,
-        user,
+        user: {
+          _id: user._id,
+          name: user.name,
+          email: user.email,
+          profilePic: user.profilePic,
+          googleId: user.googleId
+        }
       });
     } else {
+      console.log("Auth status: Not authenticated");
       res.json({ authenticated: false });
     }
   } catch (error) {
     console.error("Auth status error:", error);
-    res.json({ authenticated: false });
+    res.json({ authenticated: false, error: error.message });
   }
 });
 
@@ -104,27 +129,69 @@ router.get(
         return res.redirect(`${process.env.CLIENT_URL}/login`);
       }
 
+      // First check if user exists by googleId
       let existingUser = await User.findOne({ googleId });
 
-      if (!existingUser) {
-        existingUser = await User.create({
-          googleId,
-          name,
-          email,
-          profilePic,
-        });
+      // If no user found by googleId, check by email
+      if (!existingUser && email) {
+        existingUser = await User.findOne({ email });
+        
+        // If user exists by email but doesn't have googleId, update the user
+        if (existingUser && !existingUser.googleId) {
+          existingUser.googleId = googleId;
+          existingUser.profilePic = profilePic || existingUser.profilePic;
+          await existingUser.save();
+          console.log(`Updated existing user (${existingUser.email}) with Google ID`);
+        }
       }
 
+      // If still no user, create a new one
+      if (!existingUser) {
+        try {
+          existingUser = await User.create({
+            googleId,
+            name,
+            email,
+            profilePic,
+          });
+          console.log(`Created new user with Google ID: ${googleId}`);
+        } catch (createError) {
+          if (createError.code === 11000) {
+            // Handle duplicate key error differently
+            console.error(`Duplicate key error: ${JSON.stringify(createError)}`);
+            
+            // Try to find the user one more time
+            existingUser = await User.findOne({ email });
+            
+            if (!existingUser) {
+              return res.redirect(`${process.env.CLIENT_URL}/login?error=duplicate_email`);
+            }
+            
+            // Update the existing user with Google ID if not set
+            if (!existingUser.googleId) {
+              existingUser.googleId = googleId;
+              existingUser.profilePic = profilePic || existingUser.profilePic;
+              await existingUser.save();
+              console.log(`Updated existing user after duplicate error: ${email}`);
+            }
+          } else {
+            throw createError; // Re-throw other errors
+          }
+        }
+      }
+
+      // Login the user
       req.login(existingUser, (err) => {
         if (err) {
           console.error("Login error:", err);
           return res.redirect(`${process.env.CLIENT_URL}/login`);
         }
+        console.log(`User successfully logged in: ${existingUser.email}`);
         res.redirect(`${process.env.CLIENT_URL}/landing`);
       });
     } catch (error) {
       console.error("Google login error:", error);
-      res.redirect(`${process.env.CLIENT_URL}/login`);
+      res.redirect(`${process.env.CLIENT_URL}/login?error=${error.message}`);
     }
   }
 );
