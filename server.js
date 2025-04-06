@@ -25,7 +25,7 @@ const server = http.createServer(app)
 // CORS configuration with proper headers for large file uploads
 app.use(
   cors({
-    origin: process.env.ORIGIN || "http://localhost:5173",
+    origin: [process.env.CLIENT_URL, "https://mv-live.netlify.app"],
     methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"], // Explicitly allow OPTIONS
     allowedHeaders: ["Content-Type", "Authorization"], // Allow common headers
     credentials: true,
@@ -184,7 +184,7 @@ app.use(passport.session())
 // Configure Socket.IO with better settings for video streaming
 const io = new Server(server, {
   cors: {
-    origin: process.env.ORIGIN || "https://mv-live.netlify.app/",
+    origin: [process.env.CLIENT_URL, "https://mv-live.netlify.app"],
     methods: ["GET", "POST", "OPTIONS"],
     allowedHeaders: ["Content-Type", "Authorization"],
     credentials: true,

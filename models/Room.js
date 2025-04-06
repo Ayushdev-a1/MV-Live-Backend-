@@ -28,6 +28,18 @@ const RoomSchema = new mongoose.Schema({
       enum: ["movie", "series"],
     },
     duration: Number,
+    thumbnailUrl: String,
+    genre: String,
+    year: Number,
+    director: String,
+    uploadedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+    },
+    uploadedAt: {
+      type: Date,
+      default: Date.now,
+    }
   },
   participants: [
     {
@@ -42,7 +54,47 @@ const RoomSchema = new mongoose.Schema({
   settings: {
     allowChat: { type: Boolean, default: true },
     allowMediaControl: { type: Boolean, default: true },
+    allowVideoChat: { type: Boolean, default: true },
+    maxParticipants: { type: Number, default: 10 },
+    autoPlay: { type: Boolean, default: true },
+    roomPassword: { type: String },
+    allowJoinRequests: { type: Boolean, default: true }
   },
+  playlist: [
+    {
+      title: String,
+      url: String,
+      duration: Number,
+      thumbnailUrl: String,
+      addedBy: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "User",
+      },
+      addedAt: {
+        type: Date,
+        default: Date.now,
+      }
+    }
+  ],
+  messages: [
+    {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Message",
+    }
+  ],
+  roomHistory: [
+    {
+      mediaTitle: String,
+      mediaUrl: String,
+      watchedAt: { type: Date, default: Date.now },
+      participants: [
+        {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: "User",
+        }
+      ]
+    }
+  ],
   createdAt: {
     type: Date,
     default: Date.now,

@@ -1,5 +1,6 @@
 const Message = require("../models/Message")
 const Room = require("../models/Room")
+const User = require("../models/User")
 const mongoose = require("mongoose")
 
 const initializeSocketHandlers = (io) => {
@@ -21,6 +22,7 @@ const initializeSocketHandlers = (io) => {
     const roomScreenSharing = new Map()
     const hostStates = {} // Track host's video state per room
     const videoSources = {} // Track video source per room
+    const playlists = {} // Track playlist per room
 
     // Handle WebRTC signaling with improved error handling
     socket.on("offer", (data) => {
@@ -166,6 +168,17 @@ const initializeSocketHandlers = (io) => {
           videoSources[roomId] = videoSources[roomId] || "/video/sample.mp4"
         }
 
+        // Initialize room playlist if needed
+        if (!playlists[roomId]) {
+          try {
+            // Load playlist from database
+            playlists[roomId] = room.playlist || [];
+          } catch (error) {
+            console.error("Error loading playlist:", error);
+            playlists[roomId] = [];
+          }
+        }
+
         // Notify room about new user and send current state
         io.to(roomId).emit("user-count", connectedUsers.length)
 
@@ -174,6 +187,9 @@ const initializeSocketHandlers = (io) => {
 
         // Send video source to the joining user
         socket.emit("video-source", videoSources[roomId] || "/video/sample.mp4")
+        
+        // Send current playlist to the joining user
+        socket.emit("playlist-update", playlists[roomId] || [])
 
         // Notify the new user about existing peers
         socket.emit(
@@ -202,14 +218,14 @@ const initializeSocketHandlers = (io) => {
       }
     })
 
-    socket.on("change-video-source", (data) => {
+    socket.on("change-video-source", async (data) => {
       if (!socket.isHost || !socket.roomId) {
         socket.emit("error", { message: "Only hosts can change video source" })
         return
       }
 
       try {
-        const { roomId, source } = data
+        const { roomId, source, movieMetadata = {} } = data
 
         // Validate source
         if (!source) {
@@ -225,13 +241,176 @@ const initializeSocketHandlers = (io) => {
         // Reset host state when changing video
         hostStates[roomId] = { time: 0, playing: false }
 
+        // Update room in database with new media
+        const room = await Room.findOne({ roomId });
+        if (room) {
+          // Add current media to history if changing
+          if (room.currentMedia && room.currentMedia.url) {
+            room.roomHistory.push({
+              mediaTitle: room.currentMedia.title,
+              mediaUrl: room.currentMedia.url,
+              watchedAt: new Date(),
+              participants: [...room.participants]
+            });
+            
+            // Limit history to 20 items
+            if (room.roomHistory.length > 20) {
+              room.roomHistory = room.roomHistory.slice(-20);
+            }
+          }
+          
+          // Update current media with metadata
+          const { title, duration, thumbnailUrl, genre, year, director } = movieMetadata;
+          
+          room.currentMedia = {
+            title: title || 'Untitled',
+            url: source,
+            type: 'movie',
+            duration: duration || 0,
+            thumbnailUrl,
+            genre,
+            year,
+            director,
+            uploadedBy: socket.user.userId,
+            uploadedAt: new Date()
+          };
+          
+          await room.save();
+        }
+
         // Notify all users in the room
         io.to(roomId).emit("video-source", source)
+        
+        // Also send movie metadata
+        io.to(roomId).emit("movie-metadata", {
+          ...movieMetadata,
+          source
+        });
       } catch (error) {
         console.error("Error changing video source:", error)
         socket.emit("error", { message: "Failed to change video source" })
       }
     })
+
+    // Add to playlist
+    socket.on("add-to-playlist", async (data) => {
+      if (!socket.roomId) return;
+      
+      try {
+        const { title, url, duration, thumbnailUrl } = data;
+        
+        if (!title || !url) {
+          return socket.emit("error", { message: "Invalid playlist item" });
+        }
+        
+        const newItem = {
+          title,
+          url,
+          duration,
+          thumbnailUrl,
+          addedBy: socket.user.userId,
+          addedAt: new Date()
+        };
+        
+        // Update memory playlist
+        if (!playlists[socket.roomId]) {
+          playlists[socket.roomId] = [];
+        }
+        playlists[socket.roomId].push(newItem);
+        
+        // Update database
+        const room = await Room.findOne({ roomId: socket.roomId });
+        if (room) {
+          room.playlist.push({
+            title,
+            url,
+            duration,
+            thumbnailUrl,
+            addedBy: socket.user.userId,
+            addedAt: new Date()
+          });
+          await room.save();
+        }
+        
+        // Notify all users in the room
+        io.to(socket.roomId).emit("playlist-update", playlists[socket.roomId]);
+      } catch (error) {
+        console.error("Error adding to playlist:", error);
+        socket.emit("error", { message: "Failed to add to playlist" });
+      }
+    });
+    
+    // Remove from playlist
+    socket.on("remove-from-playlist", async (data) => {
+      if (!socket.roomId) return;
+      
+      try {
+        const { index } = data;
+        
+        // Check if valid index
+        if (index < 0 || !playlists[socket.roomId] || index >= playlists[socket.roomId].length) {
+          return socket.emit("error", { message: "Invalid playlist item" });
+        }
+        
+        // Check if user has permission (host or added the item)
+        const item = playlists[socket.roomId][index];
+        const room = await Room.findOne({ roomId: socket.roomId });
+        
+        if (!room) {
+          return socket.emit("error", { message: "Room not found" });
+        }
+        
+        if (!socket.isHost && item.addedBy.toString() !== socket.user.userId) {
+          return socket.emit("error", { message: "You don't have permission to remove this item" });
+        }
+        
+        // Update memory playlist
+        playlists[socket.roomId].splice(index, 1);
+        
+        // Update database
+        if (room.playlist[index]) {
+          room.playlist.splice(index, 1);
+          await room.save();
+        }
+        
+        // Notify all users in the room
+        io.to(socket.roomId).emit("playlist-update", playlists[socket.roomId]);
+      } catch (error) {
+        console.error("Error removing from playlist:", error);
+        socket.emit("error", { message: "Failed to remove from playlist" });
+      }
+    });
+    
+    // Play next item in playlist
+    socket.on("play-next-in-playlist", async () => {
+      if (!socket.roomId || !socket.isHost) return;
+      
+      try {
+        if (!playlists[socket.roomId] || playlists[socket.roomId].length === 0) {
+          return socket.emit("error", { message: "Playlist is empty" });
+        }
+        
+        // Get the next item
+        const nextItem = playlists[socket.roomId][0];
+        
+        // Change video source
+        socket.emit("change-video-source", {
+          roomId: socket.roomId,
+          source: nextItem.url,
+          movieMetadata: {
+            title: nextItem.title,
+            duration: nextItem.duration,
+            thumbnailUrl: nextItem.thumbnailUrl
+          }
+        });
+        
+        // Remove from playlist
+        socket.emit("remove-from-playlist", { index: 0 });
+      } catch (error) {
+        console.error("Error playing next in playlist:", error);
+        socket.emit("error", { message: "Failed to play next item" });
+      }
+    });
 
     socket.on("chat-message", async (data) => {
       if (!socket.user || !socket.roomId) return
@@ -249,117 +428,95 @@ const initializeSocketHandlers = (io) => {
           return
         }
 
-        const msg = new Message({
-          roomId,
-          sender: mongoose.Types.ObjectId.isValid(socket.user.userId)
-            ? socket.user.userId
-            : new mongoose.Types.ObjectId(),
-          content: message,
+        // Validate message
+        if (!message.trim()) {
+          return
+        }
+
+        // Store in database
+        const newMessage = new Message({
+          room: room._id,
+          user: socket.user.userId,
+          text: message,
+          timestamp: new Date(),
         })
 
-        await msg.save()
+        await newMessage.save()
+
+        // Add to room messages
+        room.messages.push(newMessage._id)
+        await room.save()
+
+        // Broadcast to room
         io.to(roomId).emit("chat-message", {
-          userId: socket.user.id,
+          userId: socket.user.userId,
+          username: socket.user.username,
           message,
           timestamp: new Date(),
         })
       } catch (error) {
-        console.error("Error sending message:", error)
+        console.error("Error handling chat message:", error)
         socket.emit("error", { message: "Failed to send message" })
       }
     })
 
-    socket.on("leaveRoom", async ({ roomId }) => {
-      if (!socket.user) return
-
+    // Update user watch history when they leave
+    const updateWatchHistory = async () => {
+      if (!socket.user || !socket.roomId) return;
+      
       try {
-        socket.leave(roomId)
-        activePeers.delete(socket.id)
-
-        if (roomScreenSharing.has(roomId) && roomScreenSharing.get(roomId).socketId === socket.id) {
-          roomScreenSharing.delete(roomId)
-          io.to(roomId).emit("screenShareEnded")
+        const room = await Room.findOne({ roomId: socket.roomId });
+        if (!room || !room.currentMedia || !room.currentMedia.url) return;
+        
+        const user = await User.findById(socket.user.userId);
+        if (!user) return;
+        
+        // Add to watch history
+        user.watchHistory.push({
+          roomId: socket.roomId,
+          movieTitle: room.currentMedia.title || 'Unknown',
+          moviePath: room.currentMedia.url,
+          watchedAt: new Date(),
+          duration: room.currentMedia.duration || 0,
+          watchedDuration: hostStates[socket.roomId]?.time || 0
+        });
+        
+        // Limit history to 50 items
+        if (user.watchHistory.length > 50) {
+          user.watchHistory = user.watchHistory.slice(-50);
         }
-
-        io.to(roomId).emit("user-left", socket.id)
-
-        const roomUsers = await io.in(roomId).allSockets()
-        const connectedUsers = Array.from(roomUsers)
-          .map((socketId) => {
-            const userSocket = io.sockets.sockets.get(socketId)
-            return userSocket?.user
-              ? {
-                  userId: userSocket.user.userId,
-                  googleId: userSocket.user.id,
-                  username: userSocket.user.username,
-                  socketId,
-                }
-              : null
-          })
-          .filter(Boolean)
-
-        io.to(roomId).emit("user-count", connectedUsers.length)
-
-        if (connectedUsers.length === 0) {
-          delete hostStates[roomId]
-          delete videoSources[roomId]
-        }
+        
+        await user.save();
       } catch (error) {
-        console.error("Error in leaveRoom:", error)
+        console.error("Error updating watch history:", error);
       }
-    })
+    };
 
     socket.on("disconnect", async () => {
-      if (!socket.user) return
+      console.log(`User disconnected: ${socket.user?.username || "Unknown"} (${socket.id})`)
+      
+      // Update watch history
+      await updateWatchHistory();
 
-      activePeers.delete(socket.id)
+      // Notify room about user leaving
+      if (socket.roomId) {
+        socket.to(socket.roomId).emit("user-left", socket.id)
 
-      const rooms = Array.from(socket.rooms)
-      for (const roomId of rooms) {
-        if (roomId !== socket.id) {
-          try {
-            if (roomScreenSharing.has(roomId) && roomScreenSharing.get(roomId).socketId === socket.id) {
-              roomScreenSharing.delete(roomId)
-              io.to(roomId).emit("screenShareEnded")
-            }
+        try {
+          const roomUsers = await io.in(socket.roomId).allSockets()
+          io.to(socket.roomId).emit("user-count", roomUsers.size)
 
-            io.to(roomId).emit("user-left", socket.id)
-
-            const roomUsers = await io.in(roomId).allSockets()
-            const connectedUsers = Array.from(roomUsers)
-              .map((socketId) => {
-                const userSocket = io.sockets.sockets.get(socketId)
-                return userSocket?.user
-                  ? {
-                      userId: userSocket.user.userId,
-                      googleId: userSocket.user.id,
-                      username: userSocket.user.username,
-                      socketId,
-                    }
-                  : null
-              })
-              .filter(Boolean)
-
-            io.to(roomId).emit("user-count", connectedUsers.length)
-
-            if (connectedUsers.length === 0) {
-              delete hostStates[roomId]
-              delete videoSources[roomId]
-            }
-          } catch (error) {
-            console.error("Error in disconnect:", error)
+          // If room is empty, clean up memory
+          if (roomUsers.size === 0) {
+            delete hostStates[socket.roomId]
+            delete videoSources[socket.roomId]
+            delete playlists[socket.roomId]
           }
+        } catch (error) {
+          console.error("Error handling disconnect:", error)
         }
       }
-      console.log(`User disconnected: ${socket.user.username}`)
     })
-
-    // Broadcast host state every second
-    setInterval(() => {
-      for (const roomId in hostStates) {
-        io.to(roomId).emit("live-state", hostStates[roomId])
-      }
-    }, 1000)
   })
 }
 

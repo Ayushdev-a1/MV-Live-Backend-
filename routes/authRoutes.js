@@ -26,7 +26,6 @@ router.post("/login", async (req, res) => {
 
 router.get("/status", async (req, res) => {
   try {
-    res.setHeader('Access-Control-Allow-Origin', 'https://mv-live.netlify.app')
     if (req.isAuthenticated() && req.user) {
       const user = await User.findOne({ googleId: req.user.googleId });
       if (!user) {
