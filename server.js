@@ -20,6 +20,7 @@ const userRoutes = require("./routes/userRoutes")
 const { errorHandler } = require("./middleware/error.middleware")
 const db = require('./config/db')
 
+// Create Express app and HTTP server
 const app = express()
 const server = http.createServer(app)
 
@@ -226,8 +227,8 @@ app.use(
       stringify: false
     }),
     cookie: { 
-      secure: true,
-      sameSite: 'none',
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
       maxAge: 24 * 60 * 60 * 1000, // 24 hours
       httpOnly: true
     },
@@ -240,7 +241,14 @@ app.use(passport.session())
 // Configure Socket.IO with better settings for video streaming
 const io = new Server(server, {
   cors: {
-    origin: "https://mv-live.netlify.app",
+    origin: function(origin, callback) {
+      const allowedOrigins = ['https://mv-live.netlify.app', 'http://localhost:5173'];
+      if (!origin || allowedOrigins.indexOf(origin) !== -1) {
+        callback(null, true);
+      } else {
+        callback(null, false);
+      }
+    },
     methods: ["GET", "POST", "OPTIONS"],
     allowedHeaders: ["Content-Type", "Authorization"],
     credentials: true,
@@ -251,17 +259,16 @@ const io = new Server(server, {
   maxHttpBufferSize: 1e8, // 100MB
 });
 
-global.io = io
-
-db()
-
 // Routes
 app.use("/auth", authRoutes)
 app.use("/api/rooms", roomRoutes)
 app.use("/api/users", userRoutes)
 
-// Initialize Socket handlers
-initializeSocketHandlers(io)
+// Initialize Socket handlers AFTER defining routes
+initializeSocketHandlers(io);
+
+// Connect to database
+db();
 
 // Error handling middleware
 app.use(errorHandler)
@@ -272,4 +279,5 @@ server.listen(PORT, () => {
   console.log(`🚀 Server running on port ${PORT}`)
 })
 
-module.exports = { io } 
+// Don't export the io object directly
+module.exports = { app, server } 
