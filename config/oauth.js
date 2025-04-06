@@ -30,14 +30,33 @@ passport.use(
         // Ensure DB is connected before any operations
         await ensureDbConnected();
         
-        let user = await User.findOne({ googleId: profile.id });
+        console.log("Google profile data:", JSON.stringify({
+          id: profile.id,
+          displayName: profile.displayName,
+          emails: profile.emails,
+          photos: profile.photos
+        }, null, 2));
+        
+        // Check if we have an ID from Google
+        if (!profile.id) {
+          return done(new Error("No profile ID from Google"), null);
+        }
+        
+        // Safe extracting of profile info with fallbacks
+        const googleId = profile.id;
+        const name = profile.displayName || 'User';
+        const email = profile.emails && profile.emails.length > 0 ? profile.emails[0].value : 
+                     `${googleId}@placeholder.com`;
+        const profilePic = profile.photos && profile.photos.length > 0 ? profile.photos[0].value : null;
+        
+        let user = await User.findOne({ googleId });
 
         if (!user) {
           user = new User({
-            googleId: profile.id,
-            name: profile.displayName,
-            email: profile.emails[0].value,
-            profilePic: profile.photos[0].value, // Storing profile picture
+            googleId,
+            name,
+            email,
+            profilePic,
           });
           await user.save();
         }

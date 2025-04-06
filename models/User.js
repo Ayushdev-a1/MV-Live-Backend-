@@ -1,9 +1,16 @@
 const mongoose = require("mongoose");
+const bcrypt = require("bcryptjs");
 
 const UserSchema = new mongoose.Schema({
-  googleId: { type: String, unique: true },
+  googleId: { type: String, sparse: true },
   name: { type: String, required: true },
-  email: { type: String, unique: true, required: true },
+  email: { 
+    type: String, 
+    unique: true, 
+    required: function() { 
+      return !this.googleId; 
+    }
+  },
   profilePic: { type: String },
   password: { type: String }, 
   favorites: [
@@ -31,5 +38,13 @@ const UserSchema = new mongoose.Schema({
     }
   ],
 });
+
+// Add method to compare passwords
+UserSchema.methods.matchPassword = async function (enteredPassword) {
+  // If user has no password (e.g. Google auth), always return false
+  if (!this.password) return false;
+  
+  return await bcrypt.compare(enteredPassword, this.password);
+};
 
 module.exports = mongoose.model("User", UserSchema);

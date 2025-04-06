@@ -89,19 +89,35 @@ router.get(
         return res.redirect(`${process.env.CLIENT_URL}/login`);
       }
 
-      let existingUser = await User.findOne({ googleId: req.user.id });
+      console.log("Google auth user data:", JSON.stringify(req.user, null, 2));
+      
+      // Extract profile data safely with fallbacks
+      const googleId = req.user.id || req.user.googleId;
+      const name = req.user.displayName || 'User';
+      const email = req.user.emails && req.user.emails[0] ? req.user.emails[0].value : 
+                   (req.user.email || `${googleId}@placeholder.com`);
+      const profilePic = req.user.photos && req.user.photos[0] ? req.user.photos[0].value : 
+                        (req.user.profilePic || null);
+      
+      if (!googleId) {
+        console.error("Google Auth Error: No Google ID provided");
+        return res.redirect(`${process.env.CLIENT_URL}/login`);
+      }
+
+      let existingUser = await User.findOne({ googleId });
 
       if (!existingUser) {
         existingUser = await User.create({
-          googleId: req.user.id,
-          name: req.user.displayName,
-          email: req.user.emails[0].value,
-          profilePic: req.user.photos[0].value,
+          googleId,
+          name,
+          email,
+          profilePic,
         });
       }
 
       req.login(existingUser, (err) => {
         if (err) {
+          console.error("Login error:", err);
           return res.redirect(`${process.env.CLIENT_URL}/login`);
         }
         res.redirect(`${process.env.CLIENT_URL}/landing`);
