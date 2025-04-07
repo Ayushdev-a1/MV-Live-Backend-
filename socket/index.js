@@ -5,10 +5,18 @@ const mongoose = require("mongoose")
 
 // Fix circular dependency by not referencing global.io inside this module
 const initializeSocketHandlers = (io) => {
+  // Add connection logging
+  io.engine.on("connection_error", (err) => {
+    console.error("Socket.IO connection error:", err);
+  });
+
   io.on("connection", (socket) => {
     const googleId = socket.handshake.auth.googleId
     const username = socket.handshake.auth.username
     const userId = socket.handshake.auth.userId
+
+    console.log(`New socket connection attempt from ${username || 'unknown'} (${socket.id})`);
+    console.log(`Auth data: ${JSON.stringify({ googleId, username, userId })}`);
 
     if (!googleId || !username || !userId) {
       console.error("Authentication error: Google ID or username missing")
@@ -108,19 +116,24 @@ const initializeSocketHandlers = (io) => {
 
     socket.on("join-room", async (roomId, isHost) => {
       if (!socket.user || !roomId) {
+        console.error(`Invalid room join request: ${JSON.stringify({ userId: socket.user?.id, roomId })}`);
         socket.emit("error", { message: "Invalid room join request" })
         return
       }
 
       try {
+        console.log(`User ${socket.user.username} attempting to join room: ${roomId} as ${isHost ? "host" : "guest"}`);
+        
         const room = await Room.findOne({ roomId })
         if (!room) {
+          console.error(`Room not found: ${roomId}`);
           socket.emit("error", { message: "Room not found" })
           return
         }
 
         // Leave any previous rooms
         if (socket.roomId && socket.roomId !== roomId) {
+          console.log(`User ${socket.user.username} leaving previous room: ${socket.roomId}`);
           socket.leave(socket.roomId)
           io.to(socket.roomId).emit("user-left", socket.id)
 
