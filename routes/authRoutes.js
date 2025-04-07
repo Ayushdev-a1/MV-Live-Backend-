@@ -8,6 +8,32 @@ const User = require("../models/User");
 const mongoose = require("mongoose");
 const connectDB = require("../config/db");
 
+// CORS middleware for all auth routes
+router.use((req, res, next) => {
+  const origin = req.headers.origin;
+  const allowedOrigins = ['https://mv-live.netlify.app', 'http://localhost:5173'];
+  
+  // Set CORS headers for all requests
+  if (allowedOrigins.includes(origin)) {
+    res.header("Access-Control-Allow-Origin", origin);
+    console.log(`Setting CORS headers for ${req.method} ${req.path} from origin: ${origin}`);
+  } else if (origin) {
+    console.log(`Rejected CORS for origin: ${origin}`);
+  }
+  
+  res.header("Access-Control-Allow-Credentials", "true");
+  res.header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
+  res.header("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept, Authorization");
+  
+  // Handle preflight requests
+  if (req.method === 'OPTIONS') {
+    res.header("Access-Control-Max-Age", "86400"); // 24 hours
+    return res.status(204).end();
+  }
+  
+  next();
+});
+
 // Helper function to ensure database is connected
 const ensureDbConnected = async () => {
   if (mongoose.connection.readyState !== 1) {
@@ -38,14 +64,6 @@ router.post("/login", async (req, res) => {
   }
 });
 
-router.options("/status", (req, res) => {
-  res.header("Access-Control-Allow-Origin", "https://mv-live.netlify.app");
-  res.header("Access-Control-Allow-Methods", "GET,OPTIONS");
-  res.header("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With, Accept, Origin");
-  res.header("Access-Control-Allow-Credentials", "true");
-  res.status(204).end();
-});
-
 router.get("/status", async (req, res) => {
   try {
     await ensureDbConnected();
@@ -54,11 +72,24 @@ router.get("/status", async (req, res) => {
     const origin = req.headers.origin;
     const allowedOrigins = ['https://mv-live.netlify.app', 'http://localhost:5173'];
     
+    // Always check origin and set CORS headers
     if (allowedOrigins.includes(origin)) {
       res.header("Access-Control-Allow-Origin", origin);
     }
     res.header("Access-Control-Allow-Credentials", "true");
     res.header("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept, Authorization");
+    
+    console.log("Auth status check request:", {
+      origin: origin,
+      method: req.method,
+      headers: {
+        authorization: req.headers.authorization ? "Present" : "Missing",
+        cookie: req.headers.cookie ? "Present" : "Missing"
+      },
+      isAuthenticated: req.isAuthenticated && req.isAuthenticated(),
+      hasUser: !!req.user,
+      sessionID: req.sessionID
+    });
     
     console.log("Auth status check: isAuthenticated=", req.isAuthenticated && req.isAuthenticated(), 
                 "user=", req.user ? req.user._id || req.user.id : "none", 

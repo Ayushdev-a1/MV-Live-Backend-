@@ -34,15 +34,22 @@ const allowedOrigins = ['https://mv-live.netlify.app', 'http://localhost:5173'];
 app.use(cors({
   origin: function (origin, callback) {
     // Allow requests with no origin (like mobile apps or curl requests)
-    if (!origin) return callback(null, true);
+    if (!origin) {
+      console.log('Request with no origin');
+      return callback(null, true);
+    }
     if (allowedOrigins.indexOf(origin) === -1) {
+      console.log(`CORS rejected for origin: ${origin}`);
       return callback(null, false);
     }
+    console.log(`CORS allowed for origin: ${origin}`);
     return callback(null, true);
   },
   credentials: true,
   methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-  allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With", "Accept", "Origin"]
+  allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With", "Accept", "Origin"],
+  exposedHeaders: ["Content-Range", "X-Content-Range"],
+  maxAge: 86400 // 24 hours
 }));
 
 // Middleware to handle all OPTIONS requests and set CORS headers for all responses
@@ -55,18 +62,23 @@ app.use((req, res, next) => {
   res.header('Access-Control-Allow-Credentials', 'true');
   res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
   res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
+  res.header('Access-Control-Expose-Headers', 'Content-Range, X-Content-Range');
+  res.header('Access-Control-Max-Age', '86400');
   
-  // Handle preflight OPTIONS requests new thing 
+  // Handle preflight OPTIONS requests
   if (req.method === 'OPTIONS') {
+    console.log(`Handling OPTIONS preflight request from ${origin || 'unknown'} for ${req.path}`);
     return res.status(204).end();
   }
   
   next();
 });
 
-// Handle all OPTIONS requests explicitly at the route level
+// Global OPTIONS handler
 app.options('*', (req, res) => {
   const origin = req.headers.origin;
+  console.log(`Global OPTIONS handler for ${req.path} from ${origin || 'unknown'}`);
+  
   if (allowedOrigins.includes(origin)) {
     res.header('Access-Control-Allow-Origin', origin);
   }
@@ -74,6 +86,8 @@ app.options('*', (req, res) => {
   res.header('Access-Control-Allow-Credentials', 'true');
   res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
   res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
+  res.header('Access-Control-Expose-Headers', 'Content-Range, X-Content-Range');
+  res.header('Access-Control-Max-Age', '86400');
   res.status(204).end();
 });
 // ===== END OF CORS FIX =====
@@ -273,21 +287,37 @@ app.use((req, res, next) => {
 const io = new Server(server, {
   cors: {
     origin: function(origin, callback) {
-      const allowedOrigins = ['https://mv-live.netlify.app', 'http://localhost:5173'];
-      if (!origin || allowedOrigins.indexOf(origin) !== -1) {
-        callback(null, true);
-      } else {
-        callback(null, false);
+      if (!origin) {
+        console.log('Socket.IO request with no origin');
+        return callback(null, true);
       }
+      if (allowedOrigins.includes(origin)) {
+        console.log(`Socket.IO connection allowed for origin: ${origin}`);
+        return callback(null, true);
+      } 
+      console.log(`Socket.IO connection rejected for origin: ${origin}`);
+      return callback(new Error('Not allowed by CORS'), false);
     },
-    methods: ["GET", "POST", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "Authorization"],
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With", "Accept", "Origin"],
     credentials: true,
+    maxAge: 86400 // 24 hours
   },
   pingTimeout: 60000,
   pingInterval: 25000,
   transports: ["websocket", "polling"],
   maxHttpBufferSize: 1e8, // 100MB
+  path: '/socket.io/',
+  connectTimeout: 45000, // 45 seconds
+  allowEIO3: true, // support Engine.IO v3 clients
+  cookie: {
+    name: 'mv-live.io',
+    path: '/',
+    httpOnly: true,
+    sameSite: 'none',
+    secure: process.env.NODE_ENV === 'production',
+    maxAge: 86400000 // 24 hours
+  }
 });
 
 // Routes
