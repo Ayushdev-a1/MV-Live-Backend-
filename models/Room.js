@@ -103,6 +103,7 @@ const RoomSchema = new mongoose.Schema({
     type: Date,
     default: Date.now,
   },
+  inviteLink: { type: String, unique: true },
 });
 
 module.exports = mongoose.model("Room", RoomSchema);

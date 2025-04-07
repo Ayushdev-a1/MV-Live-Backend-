@@ -21,7 +21,20 @@ router.post("/", async (req, res) => {
   try {
     const { name, description, isPrivate, settings = {}, currentMedia = {} } = req.body;
 
-    const roomId = generateRoomId(); // Generate a unique room ID
+    let roomId;
+    let attempts = 0;
+    const maxAttempts = 5;
+
+    // Ensure roomId is unique
+    do {
+      roomId = generateRoomId();
+      const existingRoom = await Room.findOne({ roomId });
+      if (!existingRoom) break;
+      attempts++;
+      if (attempts >= maxAttempts) {
+        return res.status(500).json({ message: "Unable to generate unique room ID" });
+      }
+    } while (true);
 
     const room = await Room.create({
       roomId,
@@ -32,18 +45,20 @@ router.post("/", async (req, res) => {
       isPrivate: isPrivate || false,
       settings,
       participants: [req.user._id],
+      inviteLink: `${req.protocol}://${req.get("host")}/room?roomId=${roomId}`, // Store inviteLink in DB
     });
-
-    // Construct the shareable link using roomId
-    const shareableLink = `${req.protocol}://${req.get("host")}/room?roomId=${roomId}`;
 
     res.status(201).json({
       ...room._doc,
-      shareableLink, // Return the shareable link with the response
+      inviteLink: room.inviteLink, // Return the invite link
     });
   } catch (error) {
     console.error("Create room error:", error);
-    res.status(500).json({ message: "Server error" });
+    if (error.code === 11000) {
+      res.status(400).json({ message: "Duplicate room ID or invite link detected" });
+    } else {
+      res.status(500).json({ message: "Server error" });
+    }
   }
 });
 
@@ -54,13 +69,7 @@ router.get("/", async (req, res) => {
       .populate("createdBy", "name profilePic")
       .sort({ lastActive: -1 });
 
-    // Add shareableLink to each room in the response
-    const roomsWithLinks = rooms.map((room) => ({
-      ...room._doc,
-      shareableLink: `${req.protocol}://${req.get("host")}/room?roomId=${room.roomId}`,
-    }));
-
-    res.json(roomsWithLinks);
+    res.json(rooms); // inviteLink is already in the document
   } catch (error) {
     console.error("Get rooms error:", error);
     res.status(500).json({ message: "Server error" });
@@ -78,13 +87,7 @@ router.get("/:roomId", async (req, res) => {
       return res.status(404).json({ message: "Room not found" });
     }
 
-    // Add shareableLink to the response
-    const roomWithLink = {
-      ...room._doc,
-      shareableLink: `${req.protocol}://${req.get("host")}/room?roomId=${room.roomId}`,
-    };
-
-    res.json(roomWithLink);
+    res.json(room); // inviteLink is included
   } catch (error) {
     console.error("Get room error:", error);
     res.status(500).json({ message: "Server error" });
@@ -100,7 +103,6 @@ router.put("/:roomId", async (req, res) => {
       return res.status(404).json({ message: "Room not found" });
     }
 
-    // Only creator can update room
     if (room.createdBy.toString() !== req.user._id.toString()) {
       return res.status(403).json({ message: "Not authorized to update this room" });
     }
@@ -113,14 +115,7 @@ router.put("/:roomId", async (req, res) => {
     if (settings) room.settings = { ...room.settings, ...settings };
 
     await room.save();
-
-    // Add shareableLink to the response
-    const roomWithLink = {
-      ...room._doc,
-      shareableLink: `${req.protocol}://${req.get("host")}/room?roomId=${room.roomId}`,
-    };
-
-    res.json(roomWithLink);
+    res.json(room); // inviteLink is included
   } catch (error) {
     console.error("Update room error:", error);
     res.status(500).json({ message: "Server error" });
@@ -174,7 +169,6 @@ router.delete("/:roomId/playlist/:itemId", async (req, res) => {
       return res.status(404).json({ message: "Playlist item not found" });
     }
 
-    // Check if user is authorized (room creator or media uploader)
     if (
       room.createdBy.toString() !== req.user._id.toString() &&
       playlistItem.addedBy.toString() !== req.user._id.toString()
@@ -184,7 +178,6 @@ router.delete("/:roomId/playlist/:itemId", async (req, res) => {
 
     room.playlist.id(req.params.itemId).remove();
     await room.save();
-
     res.json(room.playlist);
   } catch (error) {
     console.error("Remove from playlist error:", error);
@@ -201,7 +194,6 @@ router.put("/:roomId/current-media", async (req, res) => {
       return res.status(404).json({ message: "Room not found" });
     }
 
-    // Only creator or participants can update current media if settings allow
     if (
       room.createdBy.toString() !== req.user._id.toString() &&
       !room.participants.some((p) => p.toString() === req.user._id.toString())
@@ -209,7 +201,6 @@ router.put("/:roomId/current-media", async (req, res) => {
       return res.status(403).json({ message: "Not authorized" });
     }
 
-    // If not creator, check if media control is allowed
     if (
       room.createdBy.toString() !== req.user._id.toString() &&
       !room.settings.allowMediaControl
@@ -219,7 +210,6 @@ router.put("/:roomId/current-media", async (req, res) => {
 
     const { title, url, type, duration, thumbnailUrl, genre, year, director } = req.body;
 
-    // Add current media to history if changing
     if (room.currentMedia && room.currentMedia.url && room.currentMedia.url !== url) {
       room.roomHistory.push({
         mediaTitle: room.currentMedia.title,
@@ -228,7 +218,6 @@ router.put("/:roomId/current-media", async (req, res) => {
         participants: [...room.participants],
       });
 
-      // Limit history to 20 items
       if (room.roomHistory.length > 20) {
         room.roomHistory = room.roomHistory.slice(-20);
       }
@@ -249,14 +238,7 @@ router.put("/:roomId/current-media", async (req, res) => {
 
     room.lastActive = new Date();
     await room.save();
-
-    // Add shareableLink to the response
-    const roomWithLink = {
-      ...room._doc,
-      shareableLink: `${req.protocol}://${req.get("host")}/room?roomId=${room.roomId}`,
-    };
-
-    res.json(roomWithLink);
+    res.json(room); // inviteLink is included
   } catch (error) {
     console.error("Update current media error:", error);
     res.status(500).json({ message: "Server error" });
@@ -288,12 +270,11 @@ router.delete("/:roomId", async (req, res) => {
       return res.status(404).json({ message: "Room not found" });
     }
 
-    // Only creator can delete room
     if (room.createdBy.toString() !== req.user._id.toString()) {
       return res.status(403).json({ message: "Not authorized to delete this room" });
     }
 
-    await room.remove();
+    await room.deleteOne(); // Updated from .remove() to .deleteOne()
     res.json({ message: "Room deleted" });
   } catch (error) {
     console.error("Delete room error:", error);
