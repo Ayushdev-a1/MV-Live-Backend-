@@ -43,6 +43,7 @@ router.post("/", async (req, res) => {
       isPrivate: isPrivate || false,
       settings,
       participants: [req.user._id]
+      
     })
     
     res.status(201).json(room)

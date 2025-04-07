@@ -319,6 +319,31 @@ const startServer = async () => {
     // Connect to MongoDB before starting the server
     await connectDB();
     
+    // Fix for existing duplicate null inviteLink values by dropping the index
+    try {
+      // Check if the collection exists and has the index
+      const collections = await mongoose.connection.db.listCollections({ name: 'rooms' }).toArray();
+      
+      if (collections.length > 0) {
+        console.log("Attempting to fix inviteLink index issue...");
+        
+        // Get all indexes on the rooms collection
+        const indexes = await mongoose.connection.db.collection('rooms').indexes();
+        
+        // Check if inviteLink_1 index exists
+        const hasInviteLinkIndex = indexes.some(index => index.name === 'inviteLink_1');
+        
+        if (hasInviteLinkIndex) {
+          console.log("Found inviteLink_1 index, dropping it...");
+          await mongoose.connection.db.collection('rooms').dropIndex('inviteLink_1');
+          console.log("Successfully dropped inviteLink_1 index");
+        }
+      }
+    } catch (indexError) {
+      console.error("Error handling inviteLink index:", indexError);
+      // Continue anyway - we don't want to prevent server startup
+    }
+    
     const PORT = process.env.PORT || 5000;
     
     server.listen(PORT, () => {

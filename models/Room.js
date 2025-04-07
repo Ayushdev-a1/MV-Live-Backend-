@@ -20,6 +20,12 @@ const RoomSchema = new mongoose.Schema({
     ref: "User",
     required: true,
   },
+  inviteLink: {
+    type: String,
+    unique: true,
+    sparse: true
+  },
+
   currentMedia: {
     title: String,
     url: String,

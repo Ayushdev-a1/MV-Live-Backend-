@@ -7,31 +7,34 @@ const { io } = require("../server")
 // Create a new room
 exports.createRoom = catchAsync(async (req, res) => {
   const { name, description, isPrivate } = req.body;
-  const userId = req.user.id; // This should be the Google ID
+  const userId = req.user.id || req.user._id; // Support both formats
 
   // Generate a unique room ID 
   const roomId = uuidv4();
+
+  // Generate a shareable link
+  const inviteLink = `${req.protocol}://${req.get("host") || 'localhost:5000'}/api/rooms/${roomId}/join`;
 
   // Create new room
   const room = new Room({
     roomId,
     name,
     description,
-    createdBy: userId, // This will now accept the Google ID
+    createdBy: userId,
     participants: [userId], 
     isPrivate: isPrivate || false,
+    inviteLink: inviteLink // Explicitly set invite link
   });
 
   await room.save();
 
-  // Generate shareable link
-  const shareableLink = `${req.protocol}://${req.get("host")}/api/rooms/${roomId}/join`; 
-
+  // Return the room data with the roomId included at the top level
   res.status(201).json({
     success: true,
+    roomId: room.roomId, // Include roomId at top level for easier access
     data: {
       room,
-      shareableLink,
+      shareableLink: inviteLink,
     },
   });
 });
