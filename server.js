@@ -320,6 +320,15 @@ const io = new Server(server, {
   }
 });
 
+// Add basic error handlers for Socket.IO
+if (io && io.engine) {
+  io.engine.on('connection_error', (err) => {
+    console.error('Socket.IO connection error:', err);
+  });
+}
+
+console.log("Socket.IO server configured");
+
 // Routes
 app.use("/auth", authRoutes)
 app.use("/api/rooms", roomRoutes)
@@ -351,23 +360,27 @@ const startServer = async () => {
     
     // Fix for existing duplicate null inviteLink values by dropping the index
     try {
-      // Check if the collection exists and has the index
-      const collections = await mongoose.connection.db.listCollections({ name: 'rooms' }).toArray();
-      
-      if (collections.length > 0) {
-        console.log("Attempting to fix inviteLink index issue...");
+      // Check if the collection exists and has the index - first ensure we have a valid mongoose connection
+      if (mongoose.connection && mongoose.connection.db) {
+        const collections = await mongoose.connection.db.listCollections({ name: 'rooms' }).toArray();
         
-        // Get all indexes on the rooms collection
-        const indexes = await mongoose.connection.db.collection('rooms').indexes();
-        
-        // Check if inviteLink_1 index exists
-        const hasInviteLinkIndex = indexes.some(index => index.name === 'inviteLink_1');
-        
-        if (hasInviteLinkIndex) {
-          console.log("Found inviteLink_1 index, dropping it...");
-          await mongoose.connection.db.collection('rooms').dropIndex('inviteLink_1');
-          console.log("Successfully dropped inviteLink_1 index");
+        if (collections.length > 0) {
+          console.log("Attempting to fix inviteLink index issue...");
+          
+          // Get all indexes on the rooms collection
+          const indexes = await mongoose.connection.db.collection('rooms').indexes();
+          
+          // Check if inviteLink_1 index exists
+          const hasInviteLinkIndex = indexes.some(index => index.name === 'inviteLink_1');
+          
+          if (hasInviteLinkIndex) {
+            console.log("Found inviteLink_1 index, dropping it...");
+            await mongoose.connection.db.collection('rooms').dropIndex('inviteLink_1');
+            console.log("Successfully dropped inviteLink_1 index");
+          }
         }
+      } else {
+        console.log("MongoDB connection exists but db property is undefined, skipping index check");
       }
     } catch (indexError) {
       console.error("Error handling inviteLink index:", indexError);
@@ -377,12 +390,22 @@ const startServer = async () => {
     const PORT = process.env.PORT || 5000;
     
     server.listen(PORT, () => {
-      console.log(`Server running on port ${PORT}`)
+      console.log(`Server running on port ${PORT}`);
+      
+      // Only initialize socket handlers after server is listening
+      // Make sure io is properly defined
+      if (io) {
+        console.log("Initializing Socket.IO handlers...");
+        const socketInitSuccess = initializeSocketHandlers(io);
+        if (socketInitSuccess) {
+          console.log("Socket.IO handlers initialized successfully");
+        } else {
+          console.error("Failed to initialize Socket.IO handlers");
+        }
+      } else {
+        console.error("Socket.IO instance (io) is undefined");
+      }
     });
-    
-    // Initialize Socket.io handlers after server is running
-    initializeSocketHandlers(server);
-    
   } catch (error) {
     console.error("Failed to start server:", error);
     process.exit(1);
